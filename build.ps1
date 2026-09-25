@@ -9,7 +9,7 @@ if (Test-Path -LiteralPath $virtualEnvironmentPython) {
 else {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
     if ($null -eq $pythonCommand) {
-        throw "Не найден Python. Установите его и зависимости из requirements-build.txt."
+        throw "Python was not found. Install it and the dependencies from requirements-build.txt."
     }
     $python = $pythonCommand.Source
 }
@@ -30,7 +30,7 @@ try {
         "main.py"
 
     if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller завершился с кодом $LASTEXITCODE."
+        throw "PyInstaller exited with code $LASTEXITCODE."
     }
 }
 finally {
@@ -39,8 +39,8 @@ finally {
 
 $executable = Join-Path $projectRoot "dist\AddingFrameToPhotos.exe"
 
-# PyInstaller заменяет EXE напрямую, поэтому уже открытый Проводник может
-# продолжать показывать закэшированный стандартный значок для этого пути.
+# PyInstaller replaces the EXE directly. Refresh the Explorer icon cache so an
+# already-open Explorer window does not keep showing a stale default icon.
 if (-not ("ShellIconCacheRefresherV2" -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -77,4 +77,4 @@ public static class ShellIconCacheRefresherV2
 }
 
 [ShellIconCacheRefresherV2]::RefreshFileIcon($executable)
-Write-Host "Готово: $executable"
+Write-Host "Done: $executable"
