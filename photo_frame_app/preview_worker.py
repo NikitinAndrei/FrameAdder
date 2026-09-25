@@ -6,10 +6,12 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeAlias
 
 from .models import FrameSettings, PreviewData
 
-PreviewBuilder = Callable[[Path, FrameSettings], PreviewData]
+PreviewSource: TypeAlias = Path | tuple[Path, ...]
+PreviewBuilder = Callable[[PreviewSource, FrameSettings], PreviewData]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +27,7 @@ class PreviewWorker:
         self._build_preview = build_preview
         self._condition = threading.Condition()
         self._generation = 0
-        self._pending: tuple[int, Path, FrameSettings] | None = None
+        self._pending: tuple[int, PreviewSource, FrameSettings] | None = None
         self._result: PreviewEvent | None = None
         self._closed = False
         self._thread = threading.Thread(
@@ -47,7 +49,7 @@ class PreviewWorker:
             self._discard(self._result)
             self._result = None
 
-    def submit(self, source: Path, settings: FrameSettings) -> None:
+    def submit(self, source: PreviewSource, settings: FrameSettings) -> None:
         with self._condition:
             if self._closed:
                 return

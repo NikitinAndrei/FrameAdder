@@ -67,18 +67,18 @@ class ImageProcessorTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(result.size, (120, 60))
+        self.assertEqual(result.size, (120, 70))
         self.assertEqual(result.getpixel((0, 0)), (1, 2, 3))
         self.assertEqual(result.getpixel((9, 30)), (1, 2, 3))
-        self.assertEqual(result.getpixel((10, 5)), (200, 10, 20))
+        self.assertEqual(result.getpixel((10, 10)), (200, 10, 20))
 
     def test_output_size_rounds_halves_up(self) -> None:
         settings = FrameSettings(percentage=10, make_square=False)
 
-        self.assertEqual(ImageProcessor.output_size((5, 3), settings), (6, 3))
+        self.assertEqual(ImageProcessor.output_size((5, 3), settings), (5, 3))
 
         settings = FrameSettings(percentage=16, make_square=False)
-        self.assertEqual(ImageProcessor.output_size((100, 50), settings), (116, 58))
+        self.assertEqual(ImageProcessor.output_size((100, 50), settings), (116, 66))
 
     def test_transparent_pixels_are_composited_over_frame_color(self) -> None:
         source = Image.new("RGBA", (10, 10), (255, 0, 0, 0))
@@ -90,6 +90,53 @@ class ImageProcessorTests(unittest.TestCase):
 
         self.assertEqual(result.mode, "RGB")
         self.assertEqual(result.getpixel((5, 5)), (20, 30, 40))
+
+    def test_collage_preserves_image_edges_in_different_aspect_ratio(self) -> None:
+        wide = Image.new("RGB", (100, 40), (0, 200, 0))
+        for y in range(40):
+            for x in range(10):
+                wide.putpixel((x, y), (255, 0, 0))
+                wide.putpixel((99 - x, y), (0, 0, 255))
+        fillers = tuple(Image.new("RGB", (40, 40), (20, 30, 40)) for _ in range(3))
+
+        result, _ = ImageProcessor.create_collage(
+            (wide, *fillers),
+            FrameSettings(percentage=0, matrix_template="2x2"),
+        )
+        self.addCleanup(result.close)
+        for image in fillers:
+            self.addCleanup(image.close)
+        self.addCleanup(wide.close)
+
+        self.assertEqual(result.getpixel((0, 20)), (255, 0, 0))
+        self.assertEqual(result.getpixel((39, 20)), (0, 0, 255))
+
+    def test_linear_collage_uses_equal_outer_and_inner_frame_width(self) -> None:
+        first = Image.new("RGB", (200, 100), (255, 0, 0))
+        second = Image.new("RGB", (400, 200), (0, 0, 255))
+
+        result, output_size = ImageProcessor.create_collage(
+            (first, second),
+            FrameSettings(
+                percentage=10,
+                color=(1, 2, 3),
+                make_square=False,
+                matrix_template="1x2",
+            ),
+        )
+        self.addCleanup(first.close)
+        self.addCleanup(second.close)
+        self.addCleanup(result.close)
+
+        self.assertEqual(output_size, (230, 220))
+        self.assertEqual(result.getpixel((9, 100)), (1, 2, 3))
+        self.assertEqual(result.getpixel((10, 100)), (255, 0, 0))
+        self.assertEqual(result.getpixel((109, 100)), (255, 0, 0))
+        self.assertEqual(result.getpixel((110, 100)), (1, 2, 3))
+        self.assertEqual(result.getpixel((119, 100)), (1, 2, 3))
+        self.assertEqual(result.getpixel((120, 100)), (0, 0, 255))
+        self.assertEqual(result.getpixel((219, 100)), (0, 0, 255))
+        self.assertEqual(result.getpixel((220, 100)), (1, 2, 3))
 
     def test_large_background_is_centered_and_cropped_without_scaling(self) -> None:
         source = Image.new("RGB", (4, 2), (220, 10, 20))

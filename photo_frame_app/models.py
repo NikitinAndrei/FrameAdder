@@ -12,6 +12,12 @@ from PIL import Image
 
 RGBColor: TypeAlias = tuple[int, int, int]
 MAX_FRAME_PERCENTAGE = 200.0
+MATRIX_TEMPLATES = {
+    "1x1": (1, 1),
+    "1x2": (1, 2),
+    "2x1": (2, 1),
+    "2x2": (2, 2),
+}
 
 
 class InputValidationError(ValueError):
@@ -47,6 +53,8 @@ class FrameSettings:
     color: RGBColor = (255, 255, 255)
     background_path: Path | None = None
     make_square: bool = True
+    matrix_template: str = "1x1"
+    rotations: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not isfinite(self.percentage):
@@ -60,6 +68,10 @@ class FrameSettings:
             for channel in self.color
         ):
             raise InputValidationError("Цвет рамки должен быть задан в формате RGB.")
+        if self.matrix_template not in MATRIX_TEMPLATES:
+            raise InputValidationError("Выбран неизвестный шаблон коллажа.")
+        if any(rotation not in (0, 180) for rotation in self.rotations):
+            raise InputValidationError("Допустим поворот изображения только на 180°.")
 
 
 @dataclass(frozen=True, slots=True)

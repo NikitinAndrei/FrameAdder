@@ -8,12 +8,13 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from ..image_processor import ImageProcessor
 from ..models import (
     FrameSettings,
     InputValidationError,
+    MATRIX_TEMPLATES,
     ProcessingJob,
     ProcessingResult,
     RGBColor,
@@ -71,6 +72,9 @@ class PhotoFrameApp(tk.Tk):
         self.square_output_variable = tk.BooleanVar(value=True)
         self.status_variable = tk.StringVar(value="Готово к работе")
         self._frame_color: RGBColor = (255, 255, 255)
+        self._matrix_template = "1x1"
+        self._collage_sources: list[Path | None] = [None]
+        self._rotations: list[int] = [0]
         self._preview_after_id: str | None = None
         self._preview_poll_after_id: str | None = None
         self._poll_after_id: str | None = None
@@ -144,7 +148,13 @@ class PhotoFrameApp(tk.Tk):
 
         self.preview_panel = PreviewPanel(
             content,
-            on_source_requested=self.source_control.choose_file,
+            on_source_requested=self._choose_preview_source,
+            on_template_changed=self._on_template_changed,
+            on_rotate_requested=self._rotate_preview_source,
+            template_icons={
+                name: _resource_path(f"assets/Templates/{name}.png")
+                for name in MATRIX_TEMPLATES
+            },
         )
         self.preview_panel.grid(row=0, column=1, sticky="nsew")
 
@@ -175,6 +185,70 @@ class PhotoFrameApp(tk.Tk):
 
     def _on_source_selected(self, source: Path) -> None:
         self.output_variable.set(str(self.processor.default_output_directory(source)))
+        if self._matrix_template == "1x1":
+            self._collage_sources = [source]
+        else:
+            try:
+                files = self.processor.find_images(source)
+            except (InputValidationError, OSError):
+                files = ()
+            count = self._required_sources
+            self._collage_sources = list(files[:count]) + [None] * max(
+                0, count - len(files)
+            )
+        self.preview_panel.set_sources(tuple(self._collage_sources))
+        self._schedule_preview()
+
+    @property
+    def _required_sources(self) -> int:
+        rows, columns = MATRIX_TEMPLATES[self._matrix_template]
+        return rows * columns
+
+    def _on_template_changed(self, template: str) -> None:
+        self._matrix_template = template
+        count = self._required_sources
+        current = self._collage_sources[:count]
+        if template != "1x1" and len(current) < count:
+            source_text = self.source_variable.get().strip().strip('"')
+            if source_text:
+                try:
+                    files = self.processor.find_images(Path(source_text))
+                except (InputValidationError, OSError):
+                    files = ()
+                if files:
+                    current = list(files[:count])
+        self._collage_sources = current + [None] * max(0, count - len(current))
+        self._rotations = (self._rotations[:count] + [0] * count)[:count]
+        self.preview_panel.set_sources(tuple(self._collage_sources))
+        self._schedule_preview()
+
+    def _choose_preview_source(self, slot: int) -> None:
+        if self._busy:
+            return
+        current = self._collage_sources[slot] if slot < len(self._collage_sources) else None
+        initial_directory = current.parent if current is not None else None
+        filename = filedialog.askopenfilename(
+            parent=self,
+            title=f"Выберите изображение {slot + 1}",
+            initialdir=str(initial_directory) if initial_directory else None,
+            filetypes=ImageProcessor.FILE_TYPES,
+        )
+        if not filename:
+            return
+        selected = Path(filename)
+        self._collage_sources[slot] = selected
+        if slot == 0:
+            self.source_variable.set(filename)
+            self.output_variable.set(
+                str(self.processor.default_output_directory(selected))
+            )
+        self.preview_panel.set_sources(tuple(self._collage_sources))
+        self._schedule_preview()
+
+    def _rotate_preview_source(self, slot: int) -> None:
+        if self._busy or slot >= len(self._rotations):
+            return
+        self._rotations[slot] = 0 if self._rotations[slot] == 180 else 180
         self._schedule_preview()
 
     def _on_color_changed(self, color: RGBColor) -> None:
@@ -196,9 +270,20 @@ class PhotoFrameApp(tk.Tk):
     def _refresh_preview(self) -> None:
         self._preview_after_id = None
         source_text = self.source_variable.get().strip().strip('"')
-        if not source_text:
-            self.preview_panel.show_message(PreviewPanel.EMPTY_MESSAGE)
-            return
+        if self._matrix_template == "1x1":
+            if not source_text:
+                self.preview_panel.show_message(PreviewPanel.EMPTY_MESSAGE)
+                return
+            preview_source: Path | tuple[Path, ...] = Path(source_text)
+        else:
+            if any(source is None for source in self._collage_sources):
+                self.preview_panel.set_sources(tuple(self._collage_sources))
+                if not self._busy:
+                    self.status_variable.set("Выберите изображения для всех ячеек")
+                return
+            preview_source = tuple(
+                source for source in self._collage_sources if source is not None
+            )
 
         try:
             settings = self._read_settings()
@@ -206,7 +291,7 @@ class PhotoFrameApp(tk.Tk):
             self.preview_panel.show_message(str(error))
             return
 
-        self._preview_worker.submit(Path(source_text), settings)
+        self._preview_worker.submit(preview_source, settings)
         if not self._busy:
             self.status_variable.set("Обновление предпросмотра…")
 
@@ -237,6 +322,8 @@ class PhotoFrameApp(tk.Tk):
             color=self.settings_control.selected_color,
             background_path=self.settings_control.selected_background_path,
             make_square=self.square_output_variable.get(),
+            matrix_template=self._matrix_template,
+            rotations=tuple(self._rotations),
         )
 
     def _start_processing(self) -> None:
@@ -258,15 +345,28 @@ class PhotoFrameApp(tk.Tk):
 
         try:
             settings = self._read_settings()
-            job = self.processor.create_job(source, output, settings)
+            if self._matrix_template == "1x1":
+                job = self.processor.create_job(source, output, settings)
+            else:
+                if any(item is None for item in self._collage_sources):
+                    raise InputValidationError(
+                        "Выберите изображения для всех ячеек коллажа."
+                    )
+                collage_sources = tuple(
+                    item for item in self._collage_sources if item is not None
+                )
+                job = self.processor.create_collage_job(
+                    collage_sources, output, settings
+                )
         except (InputValidationError, OSError) as error:
             messagebox.showerror("Проверьте параметры", str(error))
             return
 
         self._active_output = job.output_directory
-        self.progress_bar.configure(maximum=len(job.files), value=0)
+        total_steps = 1 if self._matrix_template != "1x1" else len(job.files)
+        self.progress_bar.configure(maximum=total_steps, value=0)
         self._set_busy(True)
-        self.status_variable.set(f"Обработка: 0 из {len(job.files)}")
+        self.status_variable.set(f"Обработка: 0 из {total_steps}")
 
         worker = threading.Thread(
             target=self._run_job_in_background,
@@ -354,6 +454,7 @@ class PhotoFrameApp(tk.Tk):
         self.source_control.set_enabled(not busy)
         self.output_control.set_enabled(not busy)
         self.settings_control.set_enabled(not busy)
+        self.preview_panel.set_enabled(not busy)
         self.process_button.configure(state="disabled" if busy else "normal")
 
     def _on_close(self) -> None:

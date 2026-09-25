@@ -367,7 +367,7 @@ class FrameSettingsControl(ttk.LabelFrame):
             self,
             text=(
                 "Включено: Квадрат \n"
-                "Выключено: Пропорционально исходному"
+                "Выключено: Рамка одинаковой ширины"
             ),
             wraplength=260,
             foreground="#5f6368",
