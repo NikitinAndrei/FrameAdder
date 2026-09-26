@@ -17,6 +17,7 @@ else {
 Push-Location -LiteralPath $projectRoot
 try {
     & $python -m PyInstaller `
+        --add-data "assets/Templates:assets/Templates" `
         --noconfirm `
         --clean `
         --onefile `
